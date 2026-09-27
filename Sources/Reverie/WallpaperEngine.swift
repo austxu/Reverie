@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import OSLog
 import QuartzCore
 
 /// A borderless window that lives at desktop level on one screen: above the system wallpaper,
@@ -82,6 +83,13 @@ final class WallpaperEngine {
     private var player: AVQueuePlayer?
     private var looper: AVPlayerLooper?
     private var readyObservation: NSKeyValueObservation?
+    private var looperObservation: NSKeyValueObservation?
+    private var videoURL: URL?
+    private var stillURL: URL?
+    private var recoveries: [Date] = []
+    private var isRecovering = false
+    private var watchdog: Timer?
+    private let log = Logger(subsystem: "com.austinxu.Reverie", category: "playback")
     private var still: CGImage?
     private var blurredStill: CGImage?
 
@@ -95,8 +103,15 @@ final class WallpaperEngine {
     private var backdropImage: CGImage? { gravity == .resizeAspect ? blurredStill : still }
 
     var isMuted = true {
-        didSet { player?.isMuted = isMuted }
+        didSet {
+            player?.isMuted = isMuted
+            player?.sourceClock = Self.clock(muted: isMuted)
+        }
     }
+
+    /// A silent wallpaper runs on the host clock instead of the audio device's, so audio devices
+    /// disappearing (sleep, lock, headphones) can't fail playback.
+    private static func clock(muted: Bool) -> CMClock? { muted ? CMClockGetHostTimeClock() : nil }
 
     /// Whether the video should currently be advancing. The app model decides this.
     var isPlaying = false {
@@ -123,6 +138,8 @@ final class WallpaperEngine {
 
     /// Shows `url` on every screen, crossfading from the previous video if there was one.
     func show(videoURL url: URL, still stillURL: URL?) {
+        videoURL = url
+        self.stillURL = stillURL
         still = stillURL.flatMap { NSImage(contentsOf: $0)?.cgImage(forProposedRect: nil, context: nil, hints: nil) }
         blurredStill = still.flatMap(Frames.blurred)
         let firstAppearance = windows.isEmpty
@@ -131,10 +148,17 @@ final class WallpaperEngine {
         let item = AVPlayerItem(asset: AVURLAsset(url: url))
         let newPlayer = AVQueuePlayer()
         newPlayer.isMuted = isMuted
+        newPlayer.sourceClock = Self.clock(muted: isMuted)
         newPlayer.preventsDisplaySleepDuringVideoPlayback = false
         newPlayer.allowsExternalPlayback = false
         newPlayer.actionAtItemEnd = .advance
         let newLooper = AVPlayerLooper(player: newPlayer, templateItem: item)
+        // A looper that hits an error stops looping for good and empties the queue; rebuild instead.
+        looperObservation = newLooper.observe(\.status, options: [.new]) { [weak self] looper, _ in
+            guard looper.status == .failed else { return }
+            let reason = looper.error?.localizedDescription ?? "unknown error"
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.recover(reason: reason) } }
+        }
 
         let oldPlayer = player
         let layers = windows.values.map { $0.addLayer(for: newPlayer, gravity: gravity, visible: false) }
@@ -180,6 +204,10 @@ final class WallpaperEngine {
     /// Fades the wallpaper out and tears everything down, revealing the system desktop picture.
     func stop() {
         readyObservation = nil
+        looperObservation = nil
+        videoURL = nil
+        watchdog?.invalidate()
+        watchdog = nil
         let closing = Array(windows.values)
         windows.removeAll()
         let oldPlayer = player
@@ -198,7 +226,72 @@ final class WallpaperEngine {
 
     private func applyRate() {
         guard let player else { return }
+        // Belt and braces: catch a looper that broke without its status change reaching us. (A fresh
+        // looper fills the queue asynchronously, so an empty queue only means trouble once it's ready.)
+        if isPlaying, let looper, looper.status == .failed || (looper.status == .ready && player.currentItem == nil) {
+            recover(reason: "player queue is empty")
+            return
+        }
         if isPlaying { player.play() } else { player.pause() }
+        updateWatchdog()
+    }
+
+    /// While the wallpaper should be playing, checks that the video position is actually moving.
+    /// Catches stalls that no error reports, e.g. a player left stuck after the Mac locks or sleeps.
+    private func updateWatchdog() {
+        guard isPlaying, player != nil else {
+            watchdog?.invalidate()
+            watchdog = nil
+            return
+        }
+        guard watchdog == nil else { return }
+        var lastTime = CMTime.invalid
+        var stuckChecks = 0
+        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let player = self.player, self.isVisibleOnAnyScreen else { return }
+                // An empty queue after the looper was set up is a definite failure; a position that
+                // stops moving gets one more check before counting as a stall.
+                if player.currentItem == nil, self.looper?.status != .unknown {
+                    self.recover(reason: "player queue is empty")
+                    return
+                }
+                let time = player.currentTime()
+                stuckChecks = time == lastTime ? stuckChecks + 1 : 0
+                lastTime = time
+                if stuckChecks >= 2 {
+                    stuckChecks = 0
+                    self.recover(reason: "playback stalled")
+                }
+            }
+        }
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        watchdog = timer
+    }
+
+    /// Rebuilds the player for the current video after a playback failure, crossfading over the last
+    /// frame. Retries back off (1, 2, 4… s) so a device that takes a moment to return after wake gets
+    /// time to, and stop after a few attempts a minute so a persistent failure can't spin.
+    private func recover(reason: String) {
+        guard !isRecovering, player != nil else { return }
+        recoveries = recoveries.filter { $0.timeIntervalSinceNow > -60 }
+        guard recoveries.count < 5 else {
+            log.error("Playback failed (\(reason, privacy: .public)); giving up after repeated failures")
+            return
+        }
+        let delay = pow(2, Double(recoveries.count))
+        recoveries.append(.now)
+        isRecovering = true
+        log.notice("Playback failed (\(reason, privacy: .public)); rebuilding player in \(Int(delay))s")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.isRecovering = false
+                guard let url = self.videoURL, self.player != nil else { return }
+                self.show(videoURL: url, still: self.stillURL)
+            }
+        }
     }
 
     private func fadeWindows(to alpha: CGFloat) {

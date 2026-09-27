@@ -280,7 +280,7 @@ final class AppModel {
     private func updatePlayback() {
         guard engine.isPlaying != isPlaying else { return }
         engine.isPlaying = isPlaying
-        log.info("Playback \(self.isPlaying ? "resumed" : "paused", privacy: .public): \(self.statusText, privacy: .public)")
+        log.notice("Playback \(self.isPlaying ? "resumed" : "paused", privacy: .public): \(self.statusText, privacy: .public)")
     }
 
     func thumbnail(for wallpaper: Wallpaper) -> NSImage? {
