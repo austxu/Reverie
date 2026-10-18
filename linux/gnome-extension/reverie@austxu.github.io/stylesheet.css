@@ -1,0 +1,6 @@
+.reverie-status { color: rgba(255, 255, 255, 0.6); font-size: 0.9em; }
+.reverie-strip { spacing: 6px; }
+.reverie-tile { border-radius: 8px; padding: 2px; border: 2px solid transparent; }
+.reverie-tile:hover { background-color: rgba(255, 255, 255, 0.1); }
+.reverie-tile.selected { border-color: -st-accent-color; }
+.reverie-thumb { width: 56px; height: 35px; border-radius: 5px; background-size: cover; background-position: center; }

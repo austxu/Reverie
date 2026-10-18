@@ -1,0 +1,8 @@
+{
+  "uuid": "reverie@austxu.github.io",
+  "name": "Reverie",
+  "description": "Shows Reverie's live video wallpaper as your desktop background, in the overview and behind the lock screen, and pauses it when windows cover the desktop. Requires the Reverie app.",
+  "shell-version": ["46", "47", "48", "49", "50"],
+  "session-modes": ["user", "unlock-dialog"],
+  "url": "https://github.com/austxu/Reverie"
+}
