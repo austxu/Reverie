@@ -77,8 +77,12 @@ class Wallpaper:
     added_at: float = field(default_factory=time.time)
 
     @staticmethod
+    def new_id():
+        return str(uuid.uuid4()).upper()
+
+    @staticmethod
     def new(title, path, source="file", url=None):
-        return Wallpaper(id=str(uuid.uuid4()).upper(), title=title, path=path, source=source, url=url)
+        return Wallpaper(id=Wallpaper.new_id(), title=title, path=path, source=source, url=url)
 
     @property
     def is_downloaded(self):

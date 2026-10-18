@@ -81,7 +81,7 @@ class AppModel(GObject.Object):
         if not self.enabled or self.current is None:
             return "Off"
         if not self.engine.available:
-            return "Waiting for the desktop"
+            return self.engine.unavailable_status
         if self.paused_by_user:
             return "Paused"
         if self.pause_reasons:
@@ -245,7 +245,7 @@ class AppModel(GObject.Object):
             self._changed()
 
     def _start_download(self, link):
-        wallpaper_id = Wallpaper.new("", "").id
+        wallpaper_id = Wallpaper.new_id()
         self.download_state = ("downloading", 0.0)
         self._changed()
 

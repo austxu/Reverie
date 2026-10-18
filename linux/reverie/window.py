@@ -259,7 +259,7 @@ class ReverieWindow(Adw.ApplicationWindow):
     def _consent(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, css_classes=["reverie-box"])
         box.append(Gtk.Label(label="Downloading from YouTube uses yt-dlp, a free, open-source tool. "
-                                   "Install it now? (about 35 MB)", wrap=True, xalign=0))
+                                   "Install it now? (about 40 MB)", wrap=True, xalign=0))
         buttons = Gtk.Box(spacing=8, halign=Gtk.Align.END)
         not_now = Gtk.Button(label="Not Now")
         not_now.connect("clicked", lambda *_: self.model.cancel_download())

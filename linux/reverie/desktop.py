@@ -29,7 +29,7 @@ def current_desktop_pictures():
     pictures = {}
     for schema_id, key in _BACKGROUND_KEYS:
         settings = _schema(schema_id)
-        if settings and settings.settings_schema.has_key(key):
+        if settings and settings.props.settings_schema.has_key(key):
             pictures[f"{schema_id} {key}"] = settings.get_string(key)
     return pictures
 
@@ -39,7 +39,7 @@ def set_desktop_picture(path):
     uri = GLib.filename_to_uri(path)
     for schema_id, key in _BACKGROUND_KEYS:
         settings = _schema(schema_id)
-        if settings and settings.settings_schema.has_key(key):
+        if settings and settings.props.settings_schema.has_key(key):
             settings.set_string(key, uri)
     Gio.Settings.sync()
 
@@ -48,7 +48,7 @@ def restore_desktop_pictures(originals):
     for name, uri in (originals or {}).items():
         schema_id, key = name.split(" ", 1)
         settings = _schema(schema_id)
-        if settings and settings.settings_schema.has_key(key):
+        if settings and settings.props.settings_schema.has_key(key):
             settings.set_string(key, uri)
     Gio.Settings.sync()
 

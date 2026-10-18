@@ -36,7 +36,6 @@ mpv_set_property_string = _fn("mpv_set_property_string", ctypes.c_int, _p, _s, _
 mpv_get_property_string = _fn("mpv_get_property_string", _p, _p, _s)
 mpv_free = _fn("mpv_free", None, _p)
 mpv_command = _fn("mpv_command", ctypes.c_int, _p, ctypes.POINTER(_s))
-mpv_command_async = _fn("mpv_command_async", ctypes.c_int, _p, ctypes.c_uint64, ctypes.POINTER(_s))
 mpv_wait_event = _fn("mpv_wait_event", _p, _p, ctypes.c_double)
 mpv_error_string = _fn("mpv_error_string", _s, ctypes.c_int)
 _WAKEUP = ctypes.CFUNCTYPE(None, _p)
@@ -97,10 +96,6 @@ class Handle:
     def command(self, *args):
         argv = (_s * (len(args) + 1))(*[str(a).encode() for a in args], None)
         return mpv_command(self.ptr, argv)
-
-    def command_async(self, *args):
-        argv = (_s * (len(args) + 1))(*[str(a).encode() for a in args], None)
-        return mpv_command_async(self.ptr, 0, argv)
 
     def set(self, name, value):
         if isinstance(value, bool):
@@ -378,10 +373,6 @@ class Player(GObject.Object):
         GLib.idle_add(self._drain_events)
 
     # MARK: Control
-
-    @property
-    def playing(self):
-        return self._mpv.ptr is not None and self._mpv.get("pause") == "no"
 
     def set_playing(self, playing):
         if self._mpv.ptr:

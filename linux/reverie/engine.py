@@ -38,14 +38,14 @@ def _is_gnome():
 
 
 def _layer_shell():
-    """The Gtk4LayerShell module if the compositor supports wlr-layer-shell, else None."""
+    """(Gtk4LayerShell module or None, whether the library is installed)."""
     try:
         import gi
         gi.require_version("Gtk4LayerShell", "1.0")
         from gi.repository import Gtk4LayerShell
     except (ImportError, ValueError):
-        return None
-    return Gtk4LayerShell if Gtk4LayerShell.is_supported() else None
+        return None, False
+    return (Gtk4LayerShell if Gtk4LayerShell.is_supported() else None), True
 
 
 def _clear_input_region(surface):
@@ -58,6 +58,11 @@ def _clear_input_region(surface):
     region = cairo.cairo_region_create()
     gtk.gdk_surface_set_input_region(gpointer(surface), region)
     cairo.cairo_region_destroy(region)
+
+
+def _shape(monitor):
+    geometry = monitor.get_geometry()
+    return geometry.x, geometry.y, geometry.width, geometry.height, monitor.get_scale()
 
 
 class Layer(Gtk.Overlay):
@@ -88,6 +93,7 @@ class WallpaperWindow(Gtk.Window):
                          can_focus=False)
         self.monitor = monitor
         self.connector = connector
+        self.shape = _shape(monitor)
         self.add_css_class("reverie-wallpaper")
         geometry = monitor.get_geometry()
         self.set_default_size(geometry.width, geometry.height)
@@ -164,9 +170,9 @@ class WallpaperEngine(GObject.Object):
         self._recovering = False
         self._watchdog = 0
         self._shell_present = False
-        self.watchdog_enabled = True
+        self._watched_monitors = set()
 
-        self.layer_shell = None if _is_gnome() else _layer_shell()
+        self.layer_shell, self._layer_shell_installed = (None, False) if _is_gnome() else _layer_shell()
         self.backend = "gnome" if _is_gnome() else ("layer-shell" if self.layer_shell else None)
         if self.backend == "gnome":
             Gio.bus_watch_name(Gio.BusType.SESSION, SHELL_BUS_NAME, Gio.BusNameWatcherFlags.NONE,
@@ -182,9 +188,15 @@ class WallpaperEngine(GObject.Object):
         return self.backend is not None
 
     @property
+    def unavailable_status(self):
+        return "Extension is off" if self.backend == "gnome" else "Can't draw on this desktop"
+
+    @property
     def unavailable_reason(self):
         if self.backend == "gnome":
             return "Turn on the Reverie extension in the Extensions app to show your wallpaper."
+        if not self._layer_shell_installed:
+            return "Install gtk4-layer-shell so Reverie can draw beneath your windows."
         return "This desktop doesn't support background layers (wlr-layer-shell), so Reverie can't draw the wallpaper."
 
     def _on_shell_appeared(self, *_):
@@ -245,10 +257,6 @@ class WallpaperEngine(GObject.Object):
     def playing(self, playing):
         self._playing = playing
         self._apply_rate()
-
-    @property
-    def is_active(self):
-        return self.player is not None
 
     @property
     def screen_count(self):
@@ -336,7 +344,7 @@ class WallpaperEngine(GObject.Object):
     def _apply_rate(self):
         if self.player:
             self.player.set_playing(self._playing)
-        if self._playing and self.player and self.watchdog_enabled:
+        if self._playing and self.player:
             self._start_watchdog()
         else:
             self._stop_watchdog()
@@ -348,7 +356,7 @@ class WallpaperEngine(GObject.Object):
 
         def check():
             nonlocal last, stuck
-            if not self.player or not self._playing or not self.watchdog_enabled:
+            if not self.player or not self._playing:
                 self._watchdog = 0
                 return GLib.SOURCE_REMOVE
             position = self.player.position()
@@ -401,12 +409,21 @@ class WallpaperEngine(GObject.Object):
             monitor = monitors.get_item(i)
             current[monitor.get_connector() or str(i)] = monitor
         for key in list(self.windows):
-            if key not in current or self.windows[key].monitor is not current[key]:
+            window = self.windows[key]
+            # On GNOME the window stays minimized and won't follow a new resolution or scale on its
+            # own, so a changed monitor gets a fresh window.
+            if key not in current or window.monitor is not current[key] or window.shape != _shape(current[key]):
                 self.windows.pop(key).destroy()
         for key, monitor in current.items():
+            if monitor not in self._watched_monitors:
+                self._watched_monitors.add(monitor)
+                for prop in ("geometry", "scale"):
+                    monitor.connect(f"notify::{prop}", lambda *_: self._sync_windows())
             if key in self.windows:
                 continue
             window = WallpaperWindow(monitor, self.layer_shell)
             window.add_layer(self.player, self._fit, self._backdrop, visible=True)
             self.windows[key] = window
             window.show_on_monitor(self.layer_shell)
+            if self.player.frames_rendered:
+                window.root.add_css_class("shown")  # Otherwise show() reveals it with the first frame.

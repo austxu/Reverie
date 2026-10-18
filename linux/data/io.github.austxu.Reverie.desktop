@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Reverie
+GenericName=Live Wallpaper
+Comment=Live video wallpapers
+Exec=reverie %f
+Icon=io.github.austxu.Reverie
+Terminal=false
+Categories=Utility;GTK;
+Keywords=wallpaper;background;video;live;
+MimeType=video/mp4;video/quicktime;video/webm;video/x-matroska;video/x-m4v;
+StartupNotify=true
+StartupWMClass=io.github.austxu.Reverie
+SingleMainWindow=true
